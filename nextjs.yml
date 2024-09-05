@@ -1,0 +1,72 @@
+name: Build, Deploy to VPS and Notify to Telegram
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build project
+        run: pnpm build
+
+      - name: Set up SSH and Deploy
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        port: ${{ secrets.VPS_PORT }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          # make sure you have setup vps ssh key and added to your github account
+          cd /path/to/your_source
+          git pull origin master
+
+          # if you using docker in vps
+          docker-compose down
+          docker-compose up -d --build
+
+      - name: Generate commit preview image
+        run: |
+          echo "COMMIT_PREVIEW_URL=https://opengraph.githubassets.com/${GITHUB_SHA}/${GITHUB_REPOSITORY}" >> $GITHUB_ENV
+
+      - name: Send Telegram notification
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
+          -F chat_id=${TELEGRAM_CHAT_ID} \
+          -F photo="${{ env.COMMIT_PREVIEW_URL }}" \
+          -F "caption=🚀 Master Build and Deployment successful!
+
+          *Branch*: ${GITHUB_REF}
+          *Commit Author*: ${GITHUB_ACTOR}
+          *Commit Link*: https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}
+
+          Check out the details below." \
+          -F "parse_mode=Markdown" \
+          -F "reply_markup={\"inline_keyboard\":[[{\"text\":\"View Commit\",\"url\":\"https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}\"},{\"text\":\"View Actions\",\"url\":\"https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}]]}"
